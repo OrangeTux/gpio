@@ -45,14 +45,14 @@ var (
 
 // watchEventCallbacks is a map of pins and their callbacks when
 // watching for interrupts
-var watchEventCallbacks map[int]*pin
+var watchEventCallbacks map[int]*Pin
 
 // epollFD is the FD for epoll
 var epollFD int
 
 func init() {
 	setupEpoll()
-	watchEventCallbacks = make(map[int]*pin)
+	watchEventCallbacks = make(map[int]*Pin)
 }
 
 // setupEpoll sets up epoll for use
@@ -78,8 +78,8 @@ func setupEpoll() {
 			}
 			for i := 0; i < numEvents; i++ {
 				if eventPin, exists := watchEventCallbacks[int(epollEvents[i].Fd)]; exists {
-					if eventPin.initial {
-						eventPin.initial = false
+					if eventPin.Initial {
+						eventPin.Initial = false
 					} else {
 						eventPin.callback()
 					}
@@ -91,21 +91,21 @@ func setupEpoll() {
 
 }
 
-// pin represents a GPIO pin.
-type pin struct {
-	number        int      // the pin number
+// Pin represents a GPIO pin.
+type Pin struct {
+	Number        int      // the pin number
 	numberAsBytes []byte   // the pin number as a byte array to avoid converting each time
-	modePath      string   // the path to the /direction FD to avoid string joining each time
-	edgePath      string   // the path to the /edge FD to avoid string joining each time
-	valueFile     *os.File // the file handle for the value file
+	ModePath      string   // the path to the /direction FD to avoid string joining each time
+	EdgePath      string   // the path to the /edge FD to avoid string joining each time
+	ValueFile     *os.File // the file handle for the value file
 	callback      IRQEvent // the callback function to call when an interrupt occurs
-	initial       bool     // is this the initial epoll trigger?
+	Initial       bool     // is this the initial epoll trigger?
 	err           error    //the last error
 }
 
 // OpenPin exports the pin, creating the virtual files necessary for interacting with the pin.
 // It also sets the mode for the pin, making it ready for use.
-func OpenPin(n int, mode Mode) (Pin, error) {
+func OpenPin(n int, mode Mode) (Pinner, error) {
 	// export this pin to create the virtual files on the system
 	pinBase, err := expose(n)
 	if err != nil {
@@ -115,12 +115,12 @@ func OpenPin(n int, mode Mode) (Pin, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &pin{
-		number:    n,
-		modePath:  filepath.Join(pinBase, "direction"),
-		edgePath:  filepath.Join(pinBase, "edge"),
-		valueFile: value,
-		initial:   true,
+	p := &Pin{
+		Number:    n,
+		ModePath:  filepath.Join(pinBase, "direction"),
+		EdgePath:  filepath.Join(pinBase, "edge"),
+		ValueFile: value,
+		Initial:   true,
 	}
 	if err := p.setMode(mode); err != nil {
 		p.Close()
@@ -148,50 +148,50 @@ func read(path string) ([]byte, error) {
 }
 
 // Close destroys the virtual files on the filesystem, unexporting the pin.
-func (p *pin) Close() error {
-	return writeFile(filepath.Join(gpiobase, "unexport"), "%d", p.number)
+func (p *Pin) Close() error {
+	return WriteFile(filepath.Join(gpiobase, "unexport"), "%d", p.Number)
 }
 
 // Mode retrieves the current mode of the pin.
-func (p *pin) Mode() Mode {
+func (p *Pin) Mode() Mode {
 	var mode string
-	mode, p.err = readFile(p.modePath)
+	mode, p.err = readFile(p.ModePath)
 	return Mode(mode)
 }
 
 // SetMode sets the mode of the pin.
-func (p *pin) SetMode(mode Mode) {
+func (p *Pin) SetMode(mode Mode) {
 	p.err = p.setMode(mode)
 }
 
-func (p *pin) GetMode() Mode {
-	currentMode, _ := read(p.modePath)
+func (p *Pin) GetMode() Mode {
+	currentMode, _ := read(p.ModePath)
 	currentMode_ := strings.Trim(string(currentMode), "\n ")
 	return Mode(currentMode_)
 }
 
-func (p *pin) setMode(mode Mode) error {
+func (p *Pin) setMode(mode Mode) error {
 	if p.GetMode() != mode {
-		return write([]byte(mode), p.modePath)
+		return write([]byte(mode), p.ModePath)
 	} else {
 		return nil
 	}
 }
 
 // Set sets the pin level high.
-func (p *pin) Set() {
-	_, p.err = p.valueFile.Write(bytesSet)
+func (p *Pin) Set() {
+	_, p.err = p.ValueFile.Write(bytesSet)
 }
 
 // Clear sets the pin level low.
-func (p *pin) Clear() {
-	_, p.err = p.valueFile.Write(bytesClear)
+func (p *Pin) Clear() {
+	_, p.err = p.ValueFile.Write(bytesClear)
 }
 
 // Get retrieves the current pin level.
-func (p *pin) Get() bool {
+func (p *Pin) Get() bool {
 	bytes := make([]byte, 1)
-	_, p.err = p.valueFile.ReadAt(bytes, 0)
+	_, p.err = p.ValueFile.ReadAt(bytes, 0)
 	return bytes[0] == bytesSet[0]
 }
 
@@ -199,16 +199,16 @@ func (p *pin) Get() bool {
 // Watch sets the pin mode to input on your behalf, then establishes the interrupt on
 // the edge provided
 
-func (p *pin) BeginWatch(edge Edge, callback IRQEvent) error {
+func (p *Pin) BeginWatch(edge Edge, callback IRQEvent) error {
 	p.SetMode(ModeInput)
-	if err := write([]byte(edge), p.edgePath); err != nil {
+	if err := write([]byte(edge), p.EdgePath); err != nil {
 		return err
 	}
 
 	var event syscall.EpollEvent
 	event.Events = syscall.EPOLLIN | (syscall.EPOLLET & 0xffffffff) | syscall.EPOLLPRI
 
-	fd := int(p.valueFile.Fd())
+	fd := int(p.ValueFile.Fd())
 
 	p.callback = callback
 	watchEventCallbacks[fd] = p
@@ -228,9 +228,9 @@ func (p *pin) BeginWatch(edge Edge, callback IRQEvent) error {
 }
 
 // EndWatch stops watching the pin
-func (p *pin) EndWatch() error {
+func (p *Pin) EndWatch() error {
 
-	fd := int(p.valueFile.Fd())
+	fd := int(p.ValueFile.Fd())
 
 	if err := syscall.EpollCtl(epollFD, syscall.EPOLL_CTL_DEL, fd, nil); err != nil {
 		return err
@@ -247,12 +247,12 @@ func (p *pin) EndWatch() error {
 }
 
 // Wait blocks while waits for the pin state to match the condition, then returns.
-func (p *pin) Wait(condition bool) {
+func (p *Pin) Wait(condition bool) {
 	panic("Wait is not yet implemented!")
 }
 
 // Err returns the last error encountered.
-func (p *pin) Err() error {
+func (p *Pin) Err() error {
 	return p.err
 }
 
@@ -260,12 +260,12 @@ func expose(pin int) (string, error) {
 	pinBase := filepath.Join(gpiobase, fmt.Sprintf("gpio%d", pin))
 	var err error
 	if _, statErr := os.Stat(pinBase); os.IsNotExist(statErr) {
-		err = writeFile(filepath.Join(gpiobase, "export"), "%d", pin)
+		err = WriteFile(filepath.Join(gpiobase, "export"), "%d", pin)
 	}
 	return pinBase, err
 }
 
-func writeFile(path string, format string, args ...interface{}) error {
+func WriteFile(path string, format string, args ...interface{}) error {
 	f, err := os.OpenFile(path, os.O_WRONLY, 0777)
 	if err != nil {
 		return err
