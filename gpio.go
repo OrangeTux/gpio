@@ -23,8 +23,8 @@ const (
 // of an interrupt.
 type IRQEvent func()
 
-// Pin represents a GPIO pin.
-type Pin interface {
+// Pinner represents a GPIO pin.
+type Pinner interface {
 	Mode() Mode                      // gets the current pin mode
 	SetMode(Mode)                    // set the current pin mode
 	Set()                            // sets the pin state high
